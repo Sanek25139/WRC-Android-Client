@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
+import androidx.navigation.compose.currentBackStackEntryAsState
 import com.example.wrc.data.ComputerData
 import com.example.wrc.ui.components.Header
 import com.example.wrc.ui.icons.AppIcons
@@ -37,10 +38,15 @@ import com.example.wrc.vms.MainScreenVM
 
 @Composable
 fun MainScreen(vm: MainScreenVM, navController: NavHostController){
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    androidx.compose.runtime.LaunchedEffect(backStackEntry) {
+        if (backStackEntry?.destination?.route == "main") vm.load()
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Header("WRC") {
             rightRow {
-                IconButton(onClick = {}) {
+                IconButton(onClick = vm::searchForHosts) {
                     Icon(
                         AppIcons.Autorenew,
                         contentDescription = "Обновить",
@@ -57,21 +63,52 @@ fun MainScreen(vm: MainScreenVM, navController: NavHostController){
                 }
             }
         }
-        Text("Сервера:");
+        Text("Сервера:")
+
+        val groups = remember(vm.computers) {
+            vm.computers
+                .groupBy { it.serverGuid?.let { guid -> "guid:$guid" } ?: "address:${it.id}" }
+                .values
+                .map { hosts -> HostGroup(hosts.first().serverGuid, hosts) }
+        }
 
 
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            items(vm.computers) { computer ->
-                ComputerCard(computer,{ navController.navigate("edit/${it}") } ,vm::delete,{navController.navigate("remote/${it}")})
+            items(groups, key = { it.guid ?: it.computers.first().id }) { group ->
+                if (group.guid != null && group.computers.size > 1) {
+                    OutlinedCard(Modifier.fillMaxWidth().padding(horizontal = 10.dp)) {
+                        Column(Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = group.computers.first().serverName ?: group.computers.first().name,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 15.dp)
+                            )
+                            group.computers.forEach { computer ->
+                                ComputerCard(computer, { navController.navigate("edit/$it") }, vm::delete) {
+                                    navController.navigate("remote/$it")
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    group.computers.forEach { computer ->
+                        ComputerCard(computer, { navController.navigate("edit/$it") }, vm::delete) {
+                            navController.navigate("remote/$it")
+                        }
+                    }
+                }
             }
 
         }
 
     }
 }
+
+private data class HostGroup(val guid: String?, val computers: List<ComputerData>)
 
 @Composable
 fun ComputerCard(data: ComputerData,onEdit: (String) -> Unit,onDelete: (String) -> Unit,onConnection: (String) -> Unit) {
@@ -156,7 +193,5 @@ fun ComputerCard(data: ComputerData,onEdit: (String) -> Unit,onDelete: (String) 
                 )
             }
         }
-
-
     }
 }

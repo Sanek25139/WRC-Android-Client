@@ -1,33 +1,44 @@
 package com.example.wrc.services
 
 
+import android.net.ConnectivityManager
+import android.net.Network
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.example.wrc.data.HostAnnouncement
+import com.example.wrc.data.DiscoveredHost
 import com.example.wrc.data.RawCommand
+import com.example.wrc.data.ServerData
+import com.example.wrc.predicateRawCommand
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromStream
 import java.io.Closeable
 import java.io.IOException
 import java.io.InputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.SocketTimeoutException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.time.Duration.Companion.seconds
 
 class ServerManager(private val serviceScope: CoroutineScope) : Closeable {
 
-
+    val json = Json{ prettyPrint = true}
     private var socket: Socket = Socket()
 
     private var receiveJob: Job? = null
@@ -39,14 +50,26 @@ class ServerManager(private val serviceScope: CoroutineScope) : Closeable {
             if (it.byteCommand == 0xFE.toByte())
                 pongReceived = true
         }
+        subscribe(predicateRawCommand(0x00,::onGetServerData))
     }
+
+    private val _broadcastEvent = Event<DiscoveredHost>()
+    private var hostDiscoveryJob: Job? = null
+    @Volatile private var discoverySocket: DatagramSocket? = null
+    @Volatile var expectedHostGuid: String? = null
+        private set
 
     private val _readingCommand = Event<Byte>()
 
     private lateinit var udpSocket: DatagramSocket
     private lateinit var serverAddress: InetAddress
 
+    private var udpPort: Int? = null
+
     private var sequence: Long = 0
+
+    var serverData: ServerData? by mutableStateOf(null)
+        private set
 
     var connectionState: ConnectionState by mutableStateOf(ConnectionState.Disconnected)
     var rtt by mutableLongStateOf(0L)
@@ -81,6 +104,7 @@ class ServerManager(private val serviceScope: CoroutineScope) : Closeable {
     suspend fun connect(endpoint: InetSocketAddress): Boolean = withContext(Dispatchers.IO) {
         try {
             connectionState = ConnectionState.Connecting
+            serverData = null
 
             socket.close()
             socket = Socket()
@@ -91,11 +115,14 @@ class ServerManager(private val serviceScope: CoroutineScope) : Closeable {
 
 
             serverAddress = endpoint.address
-            udpSocket = DatagramSocket()
+
             attemptReconnect = true
 
             startJob()
+            delay(1.seconds)
+            send(0x00,byteArrayOf())
             connectionState = ConnectionState.Connected
+
             true
         } catch (_: Exception) {
             connectionState = ConnectionState.Error
@@ -105,6 +132,113 @@ class ServerManager(private val serviceScope: CoroutineScope) : Closeable {
         }
     }
 
+    fun subscribeToDiscoveredHosts(listener: (DiscoveredHost) -> Unit): EventToken =
+        _broadcastEvent.subscribe(listener)
+
+    fun expectHost(guid: String?) {
+        expectedHostGuid = guid
+    }
+
+    fun onNetworkLost() {
+        if (connectionState == ConnectionState.Connected ||
+            connectionState == ConnectionState.Connecting
+        ) {
+            socket.close()
+            receiveJob?.cancel()
+            pingPongJob?.cancel()
+            attemptReconnect = false
+            connectionState = ConnectionState.Error
+        }
+        startHostDiscovery()
+    }
+
+    fun startHostDiscovery(durationMillis: Long = 30_000L) {
+        require(durationMillis > 0) { "Discovery duration must be positive" }
+        stopHostDiscovery()
+        hostDiscoveryJob = serviceScope.launch(Dispatchers.IO) {
+        val discoveryPort = 47777
+        val json = Json { ignoreUnknownKeys = true }
+        try {
+        DatagramSocket(null).use { socket ->
+            discoverySocket = socket
+            socket.reuseAddress = true
+            socket.bind(InetSocketAddress(discoveryPort))
+            socket.soTimeout = 500
+            socket.broadcast = true
+
+            // The PC answers this short discovery request with HostAnnouncement JSON.
+            val query = "WRC_DISCOVER_V1".encodeToByteArray()
+            socket.send(
+                DatagramPacket(
+                    query,
+                    query.size,
+                    InetSocketAddress("255.255.255.255", discoveryPort)
+                )
+            )
+
+            val buffer = ByteArray(2048)
+            val deadline = System.nanoTime() + durationMillis * 1_000_000L
+
+            try {
+            while (!socket.isClosed && System.nanoTime() < deadline) {
+                val packet = DatagramPacket(buffer, buffer.size)
+                try {
+                    socket.receive(packet)
+                } catch (_: SocketTimeoutException) {
+                    continue
+                } catch (e: SocketException) {
+                    if (socket.isClosed) break
+                    throw e
+                }
+
+                val message = runCatching {
+                    json.decodeFromString<HostAnnouncement>(
+                        packet.data
+                            .decodeToString(packet.offset, packet.offset + packet.length)
+                    )
+                }.getOrNull() ?: continue
+
+                val discovered = DiscoveredHost(
+                    message,
+                    packet.address.hostAddress ?: continue
+                )
+                _broadcastEvent.invoke(discovered)
+
+                if (message.hostGuid == expectedHostGuid &&
+                    (connectionState == ConnectionState.Error || connectionState == ConnectionState.Disconnected)
+                ) {
+                    discoverySocket?.close()
+                    connect(InetSocketAddress(discovered.ip, message.tcpPort))
+                    break
+                }
+            }
+            } finally {
+                if (discoverySocket === socket) discoverySocket = null
+            }
+        }
+        } catch (e: IOException) {
+            // Network can disappear between ConnectivityManager callbacks and send().
+            Log.d("Discovery", "Discovery stopped because the network is unavailable", e)
+        }
+        }
+    }
+
+    fun stopHostDiscovery() {
+        hostDiscoveryJob?.cancel()
+        hostDiscoveryJob = null
+        discoverySocket?.close()
+        discoverySocket = null
+    }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    private fun onGetServerData(raw: RawCommand){
+
+        serverData = json.decodeFromStream<ServerData>(raw.data.inputStream())
+        expectedHostGuid = serverData!!.hostGUID
+
+        udpPort = serverData!!.portUDP
+        udpSocket = DatagramSocket()
+    }
     private fun startJob() {
         receiveJob?.cancel()
         pingPongJob?.cancel()
@@ -132,6 +266,8 @@ class ServerManager(private val serviceScope: CoroutineScope) : Closeable {
                 it.toByte()
             }
 
+
+
             _readingCommand.invoke(command)
 
             val lengthBytes = ByteArray(4)
@@ -144,7 +280,7 @@ class ServerManager(private val serviceScope: CoroutineScope) : Closeable {
 
             val data = ByteArray(length)
             stream.readExactly(data)
-
+            Log.d("Server","Command ${command.toString()}")
             _event.invoke(RawCommand(command,data))
         }
     }
@@ -204,6 +340,8 @@ class ServerManager(private val serviceScope: CoroutineScope) : Closeable {
 
     suspend fun sendUdp(command: Byte, data: ByteArray) {
         withContext(Dispatchers.IO) {
+            if(udpPort == null)
+                return@withContext
 
             val currentSequence = sequence++
             val buffer = ByteBuffer
@@ -219,7 +357,7 @@ class ServerManager(private val serviceScope: CoroutineScope) : Closeable {
                 buffer.array(),
                 buffer.position(),
                 serverAddress,
-                5001
+                udpPort!!
             )
 
             udpSocket.send(packet)
@@ -230,11 +368,13 @@ class ServerManager(private val serviceScope: CoroutineScope) : Closeable {
         socket.close()
         receiveJob?.cancel()
         pingPongJob?.cancel()
-        connectionState = ConnectionState.Disconnected;
+        udpPort = null
+        connectionState = ConnectionState.Disconnected
     }
 
     fun getNetInterface(scope: CoroutineScope) = NetInterface(::send,::sendUdp,_event,_readingCommand,scope)
     override fun close() {
+        stopHostDiscovery()
         disconnect()
         attemptReconnect = true
         activeEndPoint = null
@@ -252,12 +392,12 @@ class ServerManager(private val serviceScope: CoroutineScope) : Closeable {
 
             if(!pongReceived){
                 disconnect()
+                connectionState = ConnectionState.Error
                 return@withContext
             }
             rtt = (System.nanoTime() - start) / 1_000_000
         }
     }
-
 }
 enum class ConnectionState {
     Disconnected,

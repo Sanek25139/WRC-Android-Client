@@ -4,11 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
-import com.example.wrc.isSelect
-import com.example.wrc.isSingle
 import com.example.wrc.services.NetInterface
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -22,11 +18,11 @@ class RemoteKeyboardVM(val net: NetInterface) : ViewModel() {
     var isCombo: Boolean by mutableStateOf(false)
     val comboKeys = mutableListOf<ToggleData>()
 
-    //var text: String by mutableStateOf("")
-    var textFieldValue by mutableStateOf(TextFieldValue(""))
+    var text: String by mutableStateOf("")
+    //var textFieldValue by mutableStateOf(TextFieldValue(""))
 
 
-    val systemKey = listOf<ToggleData>(
+    val systemKey = listOf(
         ToggleData("WIN", 0x5B),
         ToggleData("SHIFT", 0x10),
         ToggleData("CTRL", 0x11),
@@ -52,128 +48,6 @@ class RemoteKeyboardVM(val net: NetInterface) : ViewModel() {
         ToggleData("F11",0x7A),
         ToggleData("F12",0x7B),
     )
-
-    fun getServerText(){
-        net.sendTcp(0x46)
-    }
-
-
-
-
-//    fun onSmartInputCommandProcessing(raw: RawCommand){
-//        if(raw.byteCommand == 0x50.toByte()){
-//            serverInput = true
-//            when (raw.data[0]){
-//                0x00.toByte() -> isSmartInput = raw.data[1] == 1.toByte()
-//
-//
-//                0x10.toByte() -> {
-//
-//                    serverStartPos = ByteBuffer
-//                        .wrap(raw.data,1,4)
-//                        .order(ByteOrder.LITTLE_ENDIAN)
-//                        .int
-//                    serverEndPos = ByteBuffer
-//                        .wrap(raw.data,5,4)
-//                        .order(ByteOrder.LITTLE_ENDIAN)
-//                        .int
-//
-//                    textFieldValue = textFieldValue.copy(selection = TextRange(serverStartPos,serverEndPos))
-//                }
-//                0x11.toByte() -> {
-//                    val cursorPos = ByteBuffer
-//                        .wrap(raw.data,1,4)
-//                        .order(ByteOrder.LITTLE_ENDIAN)
-//                        .int
-//
-//
-//
-//
-//                    textFieldValue = textFieldValue.copy(
-//                        text =  String(raw.data, 5, raw.data.size - 5, Charsets.UTF_8),
-//                        TextRange(cursorPos))
-//
-//                    loadingSmartText = false;
-//                }
-//                0x12.toByte() -> {
-//                    serverInput = true
-//                    val cursorPos = ByteBuffer
-//                        .wrap(raw.data, 1, 4)
-//                        .order(ByteOrder.LITTLE_ENDIAN)
-//                        .int
-//
-//                    val text = String(
-//                        raw.data,
-//                        5,
-//                        raw.data.size - 5,
-//                        Charsets.UTF_8
-//                    )
-//                    textFieldValue = TextFieldValue(
-//                        text = text,
-//                        selection = TextRange(cursorPos)
-//                    )
-//                }
-//                0x13.toByte() -> {
-//                    serverInput = true
-//                    var cursorPos = ByteBuffer
-//                        .wrap(raw.data, 1, 4)
-//                        .order(ByteOrder.LITTLE_ENDIAN)
-//                        .int
-//
-//                    val text = String(
-//                        raw.data,
-//                        5,
-//                        raw.data.size - 5,
-//                        Charsets.UTF_8
-//                    )
-//
-//                    if (textFieldValue.text.isEmpty()) {
-//                        textFieldValue = textFieldValue.copy(
-//                            text = text,
-//                            selection = TextRange(text.length)
-//                        )
-//                        return
-//                    }
-//
-//                    Log.d("SmartInput","${cursorPos.toString()} ${text.length}")
-//                    if(cursorPos > textFieldValue.text.length)
-//                        cursorPos = textFieldValue.text.length
-//                    val newText = textFieldValue.text.replaceRange(
-//                        cursorPos,
-//                        cursorPos,
-//                        text
-//                    )
-//
-//                    textFieldValue = textFieldValue.copy(
-//                        text = newText,
-//                        selection = TextRange(cursorPos + text.length)
-//                    )
-//                }
-//                0x14.toByte() -> {
-//                    Log.d("SmartInput","0x14")
-//                    val start = ByteBuffer
-//                        .wrap(raw.data, 1, 4)
-//                        .order(ByteOrder.LITTLE_ENDIAN)
-//                        .int
-//
-//                    val end = ByteBuffer
-//                        .wrap(raw.data, 5, 4)
-//                        .order(ByteOrder.LITTLE_ENDIAN)
-//                        .int
-//
-//                    val newText = textFieldValue.text.removeRange(start, end)
-//
-//                    textFieldValue = textFieldValue.copy(
-//                        text = newText,
-//                        selection = TextRange(start)
-//                    )
-//                }
-//
-//            }
-//            serverInput = false
-//
-//        }
-//    }
 
     fun openKeyboard() {
         keyboardVisibility = true
@@ -209,14 +83,9 @@ class RemoteKeyboardVM(val net: NetInterface) : ViewModel() {
 
 
 
-    fun changeValue(newValue: TextFieldValue) {
-
-
-
-
-        val oldTextLength = textFieldValue.text.length
-        val newTextLength = newValue.text.length
-        val newText = newValue.text
+    fun changeValue(newText: String) {
+        val oldTextLength = text.length
+        val newTextLength = newText.length
 
         if (isCombo && newTextLength > oldTextLength) {
             val code = newText.last().uppercaseChar().code
@@ -227,46 +96,24 @@ class RemoteKeyboardVM(val net: NetInterface) : ViewModel() {
                 perform()
             }
 
-            textFieldValue = newValue
+            text = newText
             return
         }
 
-        if(newText.length == oldTextLength){
-
-            val selection = newValue.selection
-
-            val data = ByteBuffer
-                .allocate(9)
-                .order(ByteOrder.LITTLE_ENDIAN)
-                .put(0x20)
-                .putInt( selection.start)
-                .putInt( selection.end)
-                .array()
-
-            net.sendTcp(0x50,data)
-
-
+        if(oldTextLength < newTextLength)
+        {
+            sendText(newText.substring(oldTextLength))
         }
 
-        if(textFieldValue.selection.end < newValue.selection.end && oldTextLength < newTextLength){
-            val str = newText.substring(textFieldValue.selection.end, newValue.selection.end)
-            sendText(str)
-        }
-
-        if (textFieldValue.selection.isSelect() && newValue.selection.isSingle() && newTextLength < oldTextLength) {
-            sendBackspace(1)
-        }
-        if (textFieldValue.selection.isSingle() && newValue.selection.isSingle() && newTextLength < oldTextLength) {
+        if (newTextLength < oldTextLength) {
             sendBackspace(oldTextLength - newTextLength)
         }
 
-        textFieldValue = newValue
+        text = newText
     }
 
     fun onKeyboardClose(){
-        textFieldValue = textFieldValue.copy(
-            text = ""
-        )
+        text = ""
 
 
     }

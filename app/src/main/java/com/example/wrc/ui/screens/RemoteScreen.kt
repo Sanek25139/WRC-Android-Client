@@ -74,11 +74,13 @@ fun RemoteScreen(vm: RemoteScreenVM, navController: NavHostController){
         }
     }
 
+    val hostName = vm.serverManager.serverData?.hostName
+        ?: vm.nameServer.ifBlank { "Подключение…" }
 
     Box(Modifier.fillMaxSize()){
         Column(Modifier.fillMaxSize()) {
             if(vm.panel.showTopBar) {
-                Header(vm.nameServer) {
+                Header(hostName) {
                     rightRow {
                         IconButton({expanded = !expanded}) {
                             Icon(
@@ -99,7 +101,7 @@ fun RemoteScreen(vm: RemoteScreenVM, navController: NavHostController){
                         }
                     }
                     leftRow {
-                        IconButton({}) {
+                        IconButton({vm.disconnect()}) {
                             Icon(AppIcons.MimoDisconnect, null)
                         }
                     }

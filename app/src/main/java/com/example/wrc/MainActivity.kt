@@ -1,6 +1,5 @@
 package com.example.wrc
 
-import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,8 +13,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -23,10 +24,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.content.ContextCompat
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
+import android.content.Intent
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraphBuilder
@@ -34,7 +39,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.wrc.data.ComputerData
-import com.example.wrc.data.RawCommand
 import com.example.wrc.services.ConnectionState
 import com.example.wrc.services.DataLocalService
 import com.example.wrc.services.EventBus
@@ -110,6 +114,13 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun App(padding: PaddingValues, di: DIContext){
+    val context = LocalContext.current
+    val powerManager = context.getSystemService(PowerManager::class.java)
+    var showBatteryOptimizationDialog by remember {
+        mutableStateOf(!powerManager.isIgnoringBatteryOptimizations(context.packageName))
+    }
+
+
     val navController = rememberNavController()
 
     LaunchedEffect(Unit) {
@@ -217,6 +228,36 @@ fun App(padding: PaddingValues, di: DIContext){
         }
 
 
+    }
+
+    if (showBatteryOptimizationDialog) {
+        AlertDialog(
+            onDismissRequest = { showBatteryOptimizationDialog = false },
+            title = { Text("Разрешить работу в фоне?") },
+            text = {
+                Text("Чтобы WRC могло дольше поддерживать сетевое соединение, можно исключить приложение из оптимизации батареи. Это может увеличить расход заряда.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBatteryOptimizationDialog = false
+                    val requestIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                    }
+                    try {
+                        context.startActivity(requestIntent)
+                    } catch (_: android.content.ActivityNotFoundException) {
+                        context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    }
+                }) {
+                    Text("Открыть настройки")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatteryOptimizationDialog = false }) {
+                    Text("Позже")
+                }
+            }
+        )
     }
 
 }

@@ -50,6 +50,11 @@ val icons = listOf(
     Icon("Menu","menu", size = 30),
     Icon("TextSnippet","text_snippet", size = 30),
 
+    Icon("Close","close"),
+    Icon("SelectWindow","select_window"),
+    Icon("Remove","remove"),
+    Icon("Block","block")
+
 
 
 

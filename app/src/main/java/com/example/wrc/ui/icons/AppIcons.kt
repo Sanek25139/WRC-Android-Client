@@ -37,6 +37,10 @@ import com.example.wrc.ui.icons.generated.undo
 import com.example.wrc.ui.icons.generated.redo
 import com.example.wrc.ui.icons.generated.menu
 import com.example.wrc.ui.icons.generated.text_snippet
+import com.example.wrc.ui.icons.generated.close
+import com.example.wrc.ui.icons.generated.select_window
+import com.example.wrc.ui.icons.generated.remove
+import com.example.wrc.ui.icons.generated.block
 
 object AppIcons {
     
@@ -110,4 +114,12 @@ object AppIcons {
         get() = menu
     val TextSnippet: ImageVector
         get() = text_snippet
+    val Close: ImageVector
+        get() = close
+    val SelectWindow: ImageVector
+        get() = select_window
+    val Remove: ImageVector
+        get() = remove
+    val Block: ImageVector
+        get() = block
 }

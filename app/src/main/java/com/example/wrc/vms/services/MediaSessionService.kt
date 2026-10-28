@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import com.example.wrc.data.MediaData
 import com.example.wrc.data.MediaPlaybackState
 import com.example.wrc.data.RawCommand
+import com.example.wrc.predicateRawCommand
 import com.example.wrc.services.NetInterface
 import com.example.wrc.services.ServerManager
 import com.example.wrc.services.di.DIContext
@@ -56,7 +57,7 @@ class MediaSessionService(
 
     init {
         net.receiveEvent.apply {
-            subscribe(::updateMediaData)
+            subscribe(predicateRawCommand(0x10,::updateMediaData))
             subscribe(::updateMediaThumbnail)
             subscribe(::mediaClosed)
             subscribe(::updateMediaState)
@@ -191,7 +192,7 @@ class MediaSessionService(
 
         val volume = ByteBuffer.wrap(rawCommand.data, 0, 4).order(ByteOrder.LITTLE_ENDIAN).float
         val isMute = rawCommand.data[4] != 0.toByte()
-        val displayVolume = if (isMute) 0 else Math.round(volume * MAX_VOLUME)
+        val displayVolume = if (isMute) 0 else (volume * MAX_VOLUME).roundToInt()
 
         if (isLocalVolumeChange) {
             if (displayVolume == pendingVolume) {
@@ -214,7 +215,8 @@ class MediaSessionService(
     }
     @OptIn(ExperimentalSerializationApi::class)
     private fun updateMediaData(rawCommand: RawCommand){
-        if(session != null && rawCommand.byteCommand == 0x10.toByte()){
+        Log.d("MediaSessionService", "updateMediaData")
+        if(session != null){
             val data = json.decodeFromStream<MediaData>(rawCommand.data.inputStream())
             mediaData = data
             updateMetadata()
@@ -223,6 +225,7 @@ class MediaSessionService(
     }
     private fun updateMediaThumbnail(rawCommand: RawCommand){
         if(rawCommand.byteCommand == 0x13.toByte()){
+            Log.d("MediaSessionService", "updateMediaThumbnail")
             if(rawCommand.data.isEmpty()){
                 mediaImage = null
             }
@@ -266,6 +269,8 @@ class MediaSessionService(
     private fun updateMediaState(rawCommand: RawCommand) {
         if (rawCommand.byteCommand != 0x11.toByte()) return
 
+        Log.d("MediaSessionService", "updateMediaState")
+
         val stateValue = ByteBuffer.wrap(rawCommand.data, 0, 4).order(ByteOrder.LITTLE_ENDIAN).int
         val capabilities = ByteBuffer.wrap(rawCommand.data, 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
         val positionMs = ByteBuffer.wrap(rawCommand.data, 8, 8).order(ByteOrder.LITTLE_ENDIAN).long
@@ -288,6 +293,7 @@ class MediaSessionService(
     private fun updateMediaPosition(rawCommand: RawCommand) {
         if (rawCommand.byteCommand != 0x12.toByte()) return
 
+        Log.d("MediaSessionService", "updateMediaPosition")
         val positionMs = ByteBuffer.wrap(rawCommand.data, 0, 8).order(ByteOrder.LITTLE_ENDIAN).long
         currentPositionMs = positionMs
 

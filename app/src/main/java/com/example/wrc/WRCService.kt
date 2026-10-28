@@ -1,6 +1,8 @@
 package com.example.wrc
 
 import android.app.Service
+import android.net.ConnectivityManager
+import android.net.Network
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -33,6 +35,17 @@ class WRCService : Service() {
 
     lateinit var mediaSessionService: MediaSessionService
         private set
+    private lateinit var connectivityManager: ConnectivityManager
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            if (serverManager.connectionState != ConnectionState.Connected) {
+                serverManager.startHostDiscovery()
+            }
+        }
+        override fun onLost(network: Network) {
+            serverManager.onNetworkLost()
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -40,6 +53,8 @@ class WRCService : Service() {
         notificationHelper.createChannels()
 
         serverManager = ServerManager(serviceScope)
+        connectivityManager = getSystemService(ConnectivityManager::class.java)
+        connectivityManager.registerDefaultNetworkCallback(networkCallback)
         net = serverManager.getNetInterface(serviceScope)
 
         // ПОДСТАВЬ реальный способ подписки на статус соединения у ServerManager
@@ -49,6 +64,8 @@ class WRCService : Service() {
                 notificationHelper.updateConnectionNotification(state)
                 if(state == ConnectionState.Disconnected || state == ConnectionState.Error || state == ConnectionState.Connecting)
                     notificationHelper.hideMediaNotification()
+                if (state == ConnectionState.Error)
+                    serverManager.startHostDiscovery()
 
              }
             .launchIn(serviceScope)
@@ -88,6 +105,7 @@ class WRCService : Service() {
 
     override fun onDestroy() {
         instance.value = null
+        connectivityManager.unregisterNetworkCallback(networkCallback)
 
         //mediaSessionService.close()
         serverManager.close()
